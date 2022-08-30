@@ -1,0 +1,181 @@
+//#INCLUDEPATH "pathTobinDebugFolder"
+//#USER_SIMPLSHARP_LIBRARY "C# Namespace"
+#DEFAULT_VOLATILE
+#ENABLE_STACK_CHECKING
+#ENABLE_TRACE
+#ENCODING_ASCII
+//#ENCODING_UTF16
+#DEFINE_CONSTANT cHeader "\xAA"
+#DEFINE_CONSTANT cPwrCommand "\x11"
+#DEFINE_CONSTANT cVolCommand "\x12"
+#DEFINE_CONSTANT cMuteCommand "\x13"
+#DEFINE_CONSTANT cInputCommand "\x14"
+
+
+/*
+v1
+- Fixed input switching commands
+- Added Mute On/Off commands
+
+v3
+- changed deviceRx to a buffer input
+*/
+
+
+//Create I/Os for simpl
+digital_input _skip_, PollEnable, _skip_, PowerOn, PowerOff, _skip_, VolumeMuteOn, VolumeMuteOff, _skip_, DVI, HDMI[2,2];
+analog_input _skip_, VolumeIn;
+digital_output _skip_, PowerOnFb, PowerOffFb;
+string_output _skip_, DeviceTx; //Debug;
+string_input _skip_, DeviceRx[1000];
+
+//parameter from simpl
+integer_parameter ID;
+
+//Global vars
+integer volTemp, rxFlag;
+string sTemp[100],Checksum[100], DeviceBuffer[100],DeviceBuffer2[100];
+
+
+//functions
+integer_function GetChecksum(string Command) {
+   integer i,returnValue;
+   
+   for(i = 1 to len(Command))
+   {
+       returnValue = returnValue + byte(Command,i);
+   }
+   return (returnValue);
+}
+
+
+//I/O events
+push PollEnable {
+    while(PollEnable)
+    {
+        makestring(sTemp,"%s%s\x00",cPwrCommand,chr(ID));
+        Checksum = chr(GetChecksum(sTemp));
+        makestring(DeviceTx,"%s%s%s",cHeader,sTemp,Checksum);
+        delay(1000);
+    }
+}
+
+push PowerOn {
+    makestring(sTemp,"%s%s\x01\x01",cPwrCommand,chr(ID));
+    Checksum = chr(GetChecksum(sTemp));
+    makestring(DeviceTx,"%s%s%s",cHeader,sTemp,Checksum);
+}
+push PowerOff {
+    makestring(sTemp,"%s%s\x01\x00",cPwrCommand,chr(ID));
+    Checksum = chr(GetChecksum(sTemp));
+    makestring(DeviceTx,"%s%s%s",cHeader,sTemp,Checksum);
+}
+push HDMI {
+    integer iTemp;
+
+    iTemp = GetLastModifiedArrayIndex();
+
+    if(PowerOffFb)
+    {
+        makestring(sTemp,"%s%s\x01\x01",cPwrCommand,chr(ID));
+        Checksum = chr(GetChecksum(sTemp));
+        makestring(DeviceTx,"%s%s%s",cHeader,sTemp,Checksum);
+        delay(30);
+    }
+
+    switch(iTemp)
+    {
+        case(1):
+        {
+            makestring(sTemp,"%s%s\x01\x21",cInputCommand,chr(ID));
+            Checksum = chr(GetChecksum(sTemp));
+            makestring(DeviceTx,"%s%s%s",cHeader,sTemp,Checksum);
+        }
+        case(2):
+        {
+            makestring(sTemp,"%s%s\x01\x23",cInputCommand,chr(ID));
+            Checksum = chr(GetChecksum(sTemp));
+            makestring(DeviceTx,"%s%s%s",cHeader,sTemp,Checksum);
+        }
+    }
+}
+push DVI {
+    if(PowerOffFb)
+    {
+        makestring(sTemp,"%s%s\x01\x01",cPwrCommand,chr(ID));
+        Checksum = chr(GetChecksum(sTemp));
+        makestring(DeviceTx,"%s%s%s",cHeader,sTemp,Checksum);
+        delay(30);
+    }    
+    makestring(sTemp,"%s%s\x01\x18",cInputCommand,chr(ID));
+    Checksum = chr(GetChecksum(sTemp));
+    makestring(DeviceTx,"%s%s%s",cHeader,sTemp,Checksum);
+}
+
+push VolumeMuteOn {
+    makestring(sTemp, "%s%s\x01\x01",cMuteCommand,chr(ID));
+    Checksum = chr(GetChecksum(sTemp));
+    makestring(DeviceTx, "%s%s%s",cHeader,sTemp,Checksum);
+}
+push VolumeMuteOff {
+    makestring(sTemp, "%s%s\x01\x00",cMuteCommand,chr(ID));
+    Checksum = chr(GetChecksum(sTemp));
+    makestring(DeviceTx, "%s%s%s",cHeader,sTemp,Checksum);
+}
+
+change VolumeIn {
+    integer iTemp;
+    string svTemp[100];
+    volTemp = ((VolumeIn - 0)*(100 - 0)/(65535 - 0)) + 0;   
+    iTemp = (19 + ID + volTemp);
+    Checksum = chr(iTemp);
+    svTemp = chr(volTemp);
+    makestring(DeviceTx,"%s%s%s\x01%s%s",cHeader,cVolCommand,chr(ID),svTemp,Checksum);
+}
+
+change DeviceRx {
+	if(rxFlag = 0)
+	{
+    	//DeviceBuffer = DeviceRx;
+		//DeviceBuffer2 = DeviceBuffer2 + DeviceBuffer;
+        //trace("DeviceBuffer = %s \n DeviceBuffer2 = %s", HexToA(DeviceBuffer),DeviceBuffer2);
+        
+ 		
+		if(len(DeviceRx) = 8)
+		{			rxFlag = 1;
+
+		    if(byte(DeviceRx,5) = 65)  //'A' for Ack
+		    {
+		        if(byte(DeviceRx,6) = 17)  //'\x11' for power response
+		        {
+		            switch(byte(DeviceRx,7))
+		            {
+		                case(1):
+		                {
+		                    PowerOffFb = 0;
+		                    PowerOnFb = 1;
+		                }
+		                case(0):
+		                {
+		                    PowerOnFb = 0;
+		                    PowerOffFb = 1;
+		                }
+		            }
+		        }
+		    }
+			
+			// DeviceBuffer2 = "";
+			rxFlag = 0;
+		}
+	}
+}
+
+function main() {
+    waitForInitializationComplete();
+    PowerOnFb = 0;
+    PowerOffFb = 1;
+	rxFlag = 0;
+}
+
+
+
